@@ -2,7 +2,6 @@
 #include <fstream>
 #include <sstream>
 #include <assert.h>
-#include "mat_transform.hpp"
 #include "gpu_func.cuh"
 
 YOLOX::YOLOX(const OnnxDynamicNetInitParamV1& params) : params_(params)
@@ -20,6 +19,11 @@ YOLOX::YOLOX(const OnnxDynamicNetInitParamV1& params) : params_(params)
 		LoadOnnxModel(params_.onnx_model);
 		SaveRtModel(params_.rt_stream_path + params_.rt_model_name);
 	}
+
+	transform_ = new ComposeMatLambda({
+		YoloXResize(crop_size_),
+		MatToFloat(),
+	});
 }
 
 bool YOLOX::CheckFileExist(const std::string& path)
@@ -40,10 +44,10 @@ void YOLOX::LoadOnnxModel(const std::string& onnx_file)
 	nvinfer1::IBuilder* builder = nvinfer1::createInferBuilder(logger_);
 	assert(builder != nullptr);
 
-	// ����network
+	// 创建network
 	const auto explicitBatch = 1U << static_cast<uint32_t> (nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
 	nvinfer1::INetworkDefinition* network = builder->createNetworkV2(explicitBatch);
-	// onnx������
+	// onnx解析器
 	nvonnxparser::IParser* parser = nvonnxparser::createParser(*network, logger_);
 	assert(parser->parseFromFile(onnx_file.c_str(), 2));
 
@@ -91,7 +95,7 @@ void YOLOX::LoadOnnxModel(const std::string& onnx_file)
 
 void YOLOX::deserializeCudaEngine(const void* blob, std::size_t size)
 {
-	// ��������ʱ
+	// 创建运行时
 	runtime_ = nvinfer1::createInferRuntime(logger_);
 	assert(runtime_ != nullptr);
 	
@@ -139,51 +143,7 @@ bool YOLOX::LoadGieStreamBuildContext(const std::string& gie_file)
 	return true;
 }
 
-void YOLOX::ProPrecessCPU(const cv::Mat& img)
-{
-	cv::Mat img_tmp = img;
-
-	ComposeMatLambda compose({
-		YoloXResize(output_size_),
-		MatToFloat(),
-	});
-
-	cv::Mat sample_float = compose(img_tmp);
-
-	Tensor2VecMat tensor2mat;
-	std::vector<cv::Mat> channels = tensor2mat(h_input_ptr, 3, 640, 640);
-	cv::split(sample_float, channels);
-}
-
-void YOLOX::ProPrecessCPU(const std::vector<cv::Mat>& imgs)
-{
-	ComposeMatLambda compose({
-		YoloXResize(output_size_),
-		MatToFloat(),
-	});
-
-	Tensor2VecMat tensor2mat;
-	for (int i = 0; i < imgs.size(); i++)
-	{
-		cv::Mat img_tmp = imgs[i];
-		cv::Mat sample_float = compose(img_tmp);
-		std::vector<cv::Mat> channels = tensor2mat(h_input_ptr, 3, 640, 640, i);
-		cv::split(sample_float, channels);
-	}
-}
-
-void YOLOX::Forward()
-{
-	cudaMemcpy(d_input_ptr, h_input_ptr, in_shape_.count() * sizeof(float), 
-							cudaMemcpyHostToDevice);
-
-	nvinfer1::Dims4 input_dims{ _batch_size , in_shape_.channel(), 
-								in_shape_.height(), in_shape_.width()};
-	context_->setBindingDimensions(0, input_dims);
-	context_->enqueueV2(buffer_.data(), stream_, nullptr);
-
-	cudaStreamSynchronize(stream_);
-}
+// ================================== Inference ==================================
 
 std::vector<BoxInfo> YOLOX::Extract(const cv::Mat& img)
 {
@@ -194,17 +154,20 @@ std::vector<BoxInfo> YOLOX::Extract(const cv::Mat& img)
 
 	ProPrecessCPU(img);
 	Forward();
+	// 后处理cpu代码
 	/*std::vector<BoxInfo> pred_boxes = PostProcessCPU();*/
+	// 后处理gpu代码
 	std::vector<BoxInfo> pred_boxes = PostProcessGPU();
 
-	float r = std::min<float>(float(output_size_.height) / img.rows, 
-							  float(output_size_.width) / img.cols);
+	float r = std::min<float>(float(crop_size_.height) / img.rows,
+		float(crop_size_.width) / img.cols);
 	scale_coords(pred_boxes, r);
 
 	return std::move(pred_boxes);
 }
 
-std::vector<std::vector<BoxInfo>> YOLOX::Extract(const std::vector<cv::Mat>& imgs)
+std::vector<std::vector<BoxInfo>> 
+			YOLOX::Extract(const std::vector<cv::Mat>& imgs)
 {
 	if (imgs.empty())
 		return {};
@@ -218,25 +181,62 @@ std::vector<std::vector<BoxInfo>> YOLOX::Extract(const std::vector<cv::Mat>& img
 
 	ProPrecessCPU(imgs);
 	Forward();
-	std::vector<std::vector<BoxInfo>> bs_pred_boxes = PostProcessCPUMutilBs();
-	/*std::vector<std::vector<BoxInfo>> bs_pred_boxes = PostProcessGPUMutilBs();*/
+	// 多batch的cpu后处理
+	/*std::vector<std::vector<BoxInfo>> bs_pred_boxes = PostProcessCPUMutilBs();*/
+	// 多batch的gpu后处理
+	std::vector<std::vector<BoxInfo>> bs_pred_boxes = PostProcessGPUMutilBs();
 
-	for (int i=0; i<imgs.size(); i++)
+	for (int i = 0; i < imgs.size(); i++)
 	{
 		const cv::Mat& img = imgs[i];
-		float r = min<float>(float(output_size_.height) / img.rows,
-							 float(output_size_.width) / img.cols);
+		float r = min<float>(float(crop_size_.height) / img.rows,
+							 float(crop_size_.width) / img.cols);
 		scale_coords(bs_pred_boxes[i], r);
 	}
 	return std::move(bs_pred_boxes);
 }
 
+void YOLOX::ProPrecessCPU(const cv::Mat& img)
+{
+	cv::Mat img_tmp = img;
+
+	cv::Mat sample_float = (*transform_)(img_tmp);
+
+	std::vector<cv::Mat> channels = (*tensor2mat)(h_input_ptr, 3, 640, 640);
+	cv::split(sample_float, channels);
+}
+
+void YOLOX::ProPrecessCPU(const std::vector<cv::Mat>& imgs)
+{
+	for (int i = 0; i < imgs.size(); i++)
+	{
+		cv::Mat img_tmp = imgs[i];
+		cv::Mat sample_float = (*transform_)(img_tmp);
+		std::vector<cv::Mat> channels = (*tensor2mat)(h_input_ptr, 3, 640, 640, i);
+		cv::split(sample_float, channels);
+	}
+}
+
+void YOLOX::Forward()
+{
+	cudaMemcpy(d_input_ptr, h_input_ptr, in_shape_.count() * sizeof(float), 
+			   cudaMemcpyHostToDevice);
+
+	nvinfer1::Dims4 input_dims{ _batch_size , in_shape_.channel(), 
+								in_shape_.height(), in_shape_.width()};
+	context_->setBindingDimensions(0, input_dims);
+	context_->enqueueV2(buffer_.data(), stream_, nullptr);
+
+	cudaStreamSynchronize(stream_);
+}
+
+
 std::vector<BoxInfo> YOLOX::PostProcessGPU()
 {
 	int no = out_shape_.height();
 	int hw = out_shape_.channel();
-
-	detection(d_output_ptr, hw, no, test_conf_);
+	// gpu后处理函数
+	detection_bs(d_output_ptr, 1, hw, no, test_conf_);
 
 	cudaMemcpy(h_output_ptr, d_output_ptr, out_shape_.count() * sizeof(float), 
 					cudaMemcpyDeviceToHost);
@@ -264,8 +264,10 @@ std::vector<BoxInfo> YOLOX::PostProcessGPU()
 			cx + w / 2, cy + h / 2,
 			class_conf, obj_conf, class_pred));
 	}
-
+	// cpu nms
 	std::vector<BoxInfo> pred_boxes = NMS();
+	// gpu nms
+	/*std::vector<BoxInfo> pred_boxes = NUMGpu();*/
 	cout << "res boxes size: " << pred_boxes.size() << endl;
 
 	return std::move(pred_boxes);
@@ -276,9 +278,9 @@ std::vector<std::vector<BoxInfo>> YOLOX::PostProcessGPUMutilBs()
 	int num = out_shape_.num();
 	int no = out_shape_.height();
 	int hw = out_shape_.channel();
-
 	detection_bs(d_output_ptr, num, hw, no, test_conf_);
-	cudaMemcpy(h_output_ptr, d_output_ptr, out_shape_.count() * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_output_ptr, d_output_ptr, out_shape_.count() * sizeof(float), 
+		       cudaMemcpyDeviceToHost);
 	
 	vector<vector<BoxInfo>> bs_pred_boxes;
 	int bs = _batch_size;
@@ -317,7 +319,8 @@ std::vector<std::vector<BoxInfo>> YOLOX::PostProcessGPUMutilBs()
 std::vector<BoxInfo> YOLOX::PostProcessCPU()
 {
 	int no = out_shape_.height();
-	cudaMemcpy(h_output_ptr, d_output_ptr, out_shape_.count() * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_output_ptr, d_output_ptr, out_shape_.count() * sizeof(float), 
+		       cudaMemcpyDeviceToHost);
 
 	std::vector<float> output8x8(h_output_ptr, h_output_ptr + 6400 * no);
 	std::vector<float> output16x16(h_output_ptr + 6400 * no, h_output_ptr + 8000 * no);
@@ -418,12 +421,14 @@ std::vector<BoxInfo> YOLOX::NMS()
 {
 	std::vector<BoxInfo> res_boxes;
 
-	cout << "filted_pred_boxes_: " << filted_pred_boxes_.size() << endl;
+	//cout << "filted_pred_boxes_: " << filted_pred_boxes_.size() << endl;
 	if (filted_pred_boxes_.empty())
 		return res_boxes;
 
 	sort(filted_pred_boxes_.begin(), filted_pred_boxes_.end(), compose);
 
+	// 矫正检测框
+	RefineBoxes();
 	char* removed = (char*)malloc(filted_pred_boxes_.size() * sizeof(char));
 	memset(removed, 0, filted_pred_boxes_.size() * sizeof(char));
 	for (int i = 0; i < filted_pred_boxes_.size(); i++)
@@ -441,6 +446,43 @@ std::vector<BoxInfo> YOLOX::NMS()
 		}
 	}
 
+	return std::move(res_boxes);
+}
+
+std::vector<BoxInfo> YOLOX::NUMGpu()
+{
+	std::vector<BoxInfo> res_boxes;
+	if (filted_pred_boxes_.empty()) 
+		return res_boxes;
+
+	sort(filted_pred_boxes_.begin(), filted_pred_boxes_.end(), compose); 
+	// 矫正检测框
+	RefineBoxes();
+	
+	float* h_iou;
+	cudaHostAlloc((void**)&h_iou, filted_pred_boxes_.size() * filted_pred_boxes_.size() 
+				  * sizeof(float), cudaHostAllocDefault);
+
+	nms(filted_pred_boxes_.data(), filted_pred_boxes_.size(), h_iou);
+
+	char* removed = (char*)malloc(filted_pred_boxes_.size() * sizeof(char));
+	memset(removed, 0, filted_pred_boxes_.size() * sizeof(char));
+	for (int i = 0; i < filted_pred_boxes_.size(); i++)
+	{
+		if (removed[i])
+			continue;
+		res_boxes.push_back(filted_pred_boxes_[i]);
+		for (int j = i + 1; j < filted_pred_boxes_.size(); j++)
+		{
+			if (filted_pred_boxes_[j].class_idx != filted_pred_boxes_[i].class_idx)
+				continue;
+			float iou = h_iou[i * filted_pred_boxes_.size() + j]; 
+			if (iou >= 0.3)
+				removed[j] = 1;
+		}
+	}
+
+	cudaFreeHost(h_iou);
 	return std::move(res_boxes);
 }
 

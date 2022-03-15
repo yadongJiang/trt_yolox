@@ -5,14 +5,20 @@
 #include <vector>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include "common.hpp"
 
 using namespace std;
 
-// 检测算法后处理相关
-__global__ void gpu_detection(float *dev_ptr, int hw, int no, float test_conf);
-__global__ void gpu_detection_bs(float *dev_ptr, int num, int hw, int no, float test_conf);
+__device__ float iou(BoxInfo *box1, BoxInfo *box2);
+
+// 妫�娴嬬畻娉曞悗澶勭悊鐩稿叧
+__global__ void detection_kernel(float *dev_ptr, int hw, int no, float test_conf);
+__global__ void detection_bs_kernel(float *dev_ptr, int num, int hw, int no, float test_conf);
+__global__ void num_kernel(BoxInfo *dev_ptr, int num_boxes, float* dev_iou);
 
 void detection(float *dev_ptr, int hw, int no, float test_conf);
 void detection_bs(float *dev_ptr, int num, int hw, int no, float test_conf);
+
+void nms(BoxInfo *h_ptr, int num_boxes, float* h_iou);
 
 #endif

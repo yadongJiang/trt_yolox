@@ -7,50 +7,7 @@
 #include <opencv2/opencv.hpp>
 #include <cuda_runtime.h>
 #include "NvOnnxParser.h"
-
-class Shape
-{
-public:
-	Shape() :num_(0), channel_(0), height_(0), width_(0) {};
-	Shape(int num, int channel, int height, int width)
-		: num_(num), channel_(channel), height_(height), width_(width) {}
-
-	inline int num() { return num_; }
-	inline int channel() { return channel_; }
-	inline int height() { return height_; }
-	inline int width() { return width_; }
-	inline int count() { return num_ * channel_ * height_ * width_; }
-
-	inline void set_num(int num) { num_ = num; }
-	inline void set_channel(int channel) { channel_ = channel; }
-	inline void set_height(int height) { height_ = height; }
-	inline void set_width(int width) { width_ = width; }
-
-private:
-	int num_;
-	int channel_;
-	int height_;
-	int width_;
-};
-
-class Tensor2VecMat
-{
-public:
-	Tensor2VecMat() {}
-	std::vector<cv::Mat> operator()(float* input_data, 
-					int c, int h, int w, int offset = 0)
-	{
-		std::vector<cv::Mat> input_channels;
-		float* ptr = input_data + offset * c * h * w;
-		for (int i = 0; i < c; i++)
-		{
-			cv::Mat channel(h, w, CV_32FC1, ptr);
-			input_channels.push_back(channel);
-			ptr += h * w;
-		}
-		return std::move(input_channels);
-	}
-};
+#include "common.hpp"
 
 struct OnnxDynamicNetInitParamV1
 {
@@ -60,23 +17,6 @@ struct OnnxDynamicNetInitParamV1
 	std::string rt_stream_path = "./";
 	std::string rt_model_name = "defaule.gie";
 	bool use_fp16 = true;
-};
-
-struct BoxInfo
-{
-public:
-	int x1;
-	int y1;
-	int x2;
-	int y2;
-	float class_conf;
-	float score;
-	int class_idx;
-
-	BoxInfo() 
-		:x1(0), y1(0), x2(0), y2(0), class_conf(0), score(0), class_idx(-1) {}
-	BoxInfo(int lx, int ly, int rx, int ry, float conf, float s, int idx)
-		: x1(lx), y1(ly), x2(rx), y2(ry), class_conf(conf), score(s), class_idx(idx) {}
 };
 
 class Logger : public nvinfer1::ILogger
@@ -113,57 +53,78 @@ public:
 	YOLOX(const OnnxDynamicNetInitParamV1& params);
 	YOLOX() = delete;
 
+	// 单张图像输出执行函数
 	std::vector<BoxInfo> Extract(const cv::Mat& img);
+	// 多batch输入执行函数
 	std::vector<std::vector<BoxInfo>> Extract(const std::vector<cv::Mat>& imgs);
 
 private:
+	// trt infer
 	void Forward();
+	// 单张输入预处理，trt输入内存填充
 	void ProPrecessCPU(const cv::Mat& img);
+	// 多batch输入预处理，trt输入内存填充
 	void ProPrecessCPU(const std::vector<cv::Mat>& imgs);
 
+	// 单张输入的cpu后处理函数
 	std::vector<BoxInfo> PostProcessCPU();
+	// 多batch输入的cpu后处理函数
 	std::vector<std::vector<BoxInfo>> PostProcessCPUMutilBs();
 
+	// 单张输入的gpu后处理函数
 	std::vector<BoxInfo> PostProcessGPU();
+	// 多batch输入的gpu后处理函数
 	std::vector<std::vector<BoxInfo>> PostProcessGPUMutilBs();
 
+	// nms cpu代码
 	std::vector<BoxInfo> NMS();
+	// nms gpu代码
+	std::vector<BoxInfo> NUMGpu();
 
+	// 计算iou的cpu代码
 	inline float IOU(BoxInfo& b1, BoxInfo& b2)
 	{
-		b1.x1 = std::min<float>(std::max<float>(b1.x1, 0.), 640.);
-		b1.y1 = std::min<float>(std::max<float>(b1.y1, 0.), 640.);
-		b1.x2 = std::min<float>(std::max<float>(b1.x2, 0.), 640.);
-		b1.y2 = std::min<float>(std::max<float>(b1.y2, 0.), 640.);
 
-		b2.x1 = std::min<float>(std::max<float>(b2.x1, 0.), 640.);
-		b2.y1 = std::min<float>(std::max<float>(b2.y1, 0.), 640.);
-		b2.x2 = std::min<float>(std::max<float>(b2.x2, 0.), 640.);
-		b2.y2 = std::min<float>(std::max<float>(b2.y2, 0.), 640.);
+		float x1 = b1.x1 > b2.x1 ? b1.x1 : b2.x1;  
+		float y1 = b1.y1 > b2.y1 ? b1.y1 : b2.y1; 
+		float x2 = b1.x2 < b2.x2 ? b1.x2 : b2.x2; 
+		float y2 = b1.y2 < b2.y2 ? b1.y2 : b2.y2; 
 
-		float x1 = std::max<float>(b1.x1, b2.x1);
-		float y1 = std::max<float>(b1.y1, b2.y1);
-		float x2 = std::min<float>(b1.x2, b2.x2);
-		float y2 = std::min<float>(b1.y2, b2.y2);
+		float inter_area = ((x2 - x1) < 0 ? 0 : (x2 - x1)) * ((y2 - y1) < 0 ? 0 : (y2 - y1));
+		float b1_area = (b1.x2 - b1.x1) * (b1.y2 - b1.y1); 
+		float b2_area = (b2.x2 - b2.x1) * (b2.y2 - b2.y1); 
 
-		float inter_area = std::max<float>(x2 - x1, 0) * std::max<float>(y2 - y1, 0);
-		float b1_area = std::max<float>(b1.x2 - b1.x1, 0) * std::max<float>(b1.y2 - b1.y1, 0);
-		float b2_area = std::max<float>(b2.x2 - b2.x1, 0) * std::max<float>(b2.y2 - b2.y1, 0);
 		return inter_area / (b1_area + b2_area - inter_area + 1e-5);
+	}
+	// 调整预测框，使框的值处于合理范围
+	inline void RefineBoxes()
+	{
+		for (auto& box : filted_pred_boxes_)
+		{
+			box.x1 = box.x1 < 0. ? 0. : box.x1;
+			box.x1 = box.x1 > 640. ? 640. : box.x1;
+			box.y1 = box.y1 < 0. ? 0. : box.y1;
+			box.y1 = box.y1 > 640. ? 640. : box.y1;
+			box.x2 = box.x2 < 0. ? 0. : box.x2;
+			box.x2 = box.x2 > 640. ? 640. : box.x2;
+			box.y2 = box.y2 < 0. ? 0. : box.y2;
+			box.y2 = box.y2 > 640. ? 640. : box.y2;
+		}
 	}
 
 private:
 	bool CheckFileExist(const std::string& path);
+	// 直接加载onnx模型，并转换成trt模型
 	void LoadOnnxModel(const std::string& onnx_file);
+	// 保存trt模型
 	void SaveRtModel(const std::string& path);
-	void set_batch_size(int bs) { _batch_size = bs; }
-
+	// 如果已存在trt模型，则直接读取并反序列化
 	bool LoadGieStreamBuildContext(const std::string& gue_file);
-
+	// 利用反序列化的模型生成执行上下文(context_)
 	void deserializeCudaEngine(const void* blob, std::size_t size);
-
+	// 分配输入输出内存空间(cpu + gpu)
 	void mallocInputOutput();
-
+	// decode预测框, cpu代码
 	void DecodeAndFiltedBoxes(std::vector<float>&output, 
 				int stride, int height, int width, int channels);
 
@@ -174,7 +135,9 @@ private:
 	{
 		return b1.score > b2.score;
 	}
-
+	// 设置当前批次中batch_size
+	void set_batch_size(int bs) { _batch_size = bs; }
+	// 将预测框映射到原图尺度上
 	void scale_coords(std::vector<BoxInfo>& pred_boxes, float r);
 
 private:
@@ -198,12 +161,15 @@ private:
 	Shape in_shape_{ _max_batch_size, 3, 640, 640 };
 	Shape out_shape_{ _max_batch_size, 8400, 6, 1 };
 
-	cv::Size output_size_{640, 640};
+	cv::Size crop_size_{640, 640};
 
 	cudaStream_t stream_;
 
 	std::vector<BoxInfo> filted_pred_boxes_;
 	float test_conf_ = 0.3;
+
+	ComposeMatLambda *transform_;
+	Tensor2VecMat *tensor2mat;
 };
 
 #endif
