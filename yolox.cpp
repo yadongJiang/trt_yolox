@@ -9,8 +9,10 @@ YOLOX::YOLOX(const OnnxDynamicNetInitParamV1& params) : params_(params)
 	std::cout << "start init..." << std::endl;
 	cudaSetDevice(params.gpu_id);
 	_max_batch_size = params.max_batch_size;
-	in_shape_.set_num(_max_batch_size);
-	out_shape_.set_num(_max_batch_size);
+	// in_shape_.set_num(_max_batch_size);
+	in_shape_.Reshape(_max_batch_size, 3, 640, 640);
+	// out_shape_.set_num(_max_batch_size);
+	out_shape_.Reshape(_max_batch_size, 8400, 5 + params.num_classes, 1);
 
 	cudaStreamCreate(&stream_);
 

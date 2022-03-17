@@ -19,6 +19,8 @@
     params.rt_stream_path = "./"
     # 生成的trt模型名
 	params.rt_model_name = "detection.engine";
+    # 设置检测目标类别数
+    params.num_classes = 1;
 
     YOLOX yolox(params);
     # infer

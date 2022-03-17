@@ -16,6 +16,7 @@ struct OnnxDynamicNetInitParamV1
 	int max_batch_size = 1;
 	std::string rt_stream_path = "./";
 	std::string rt_model_name = "defaule.gie";
+	int num_classes = 1;
 	bool use_fp16 = true;
 };
 
@@ -158,8 +159,8 @@ private:
 	float* h_output_ptr;
 	std::vector<void*> buffer_;
 
-	Shape in_shape_{ _max_batch_size, 3, 640, 640 };
-	Shape out_shape_{ _max_batch_size, 8400, 6, 1 };
+	Shape in_shape_; // { _max_batch_size, 3, 640, 640 };
+	Shape out_shape_; // { _max_batch_size, 8400, 6, 1 };
 
 	cv::Size crop_size_{640, 640};
 

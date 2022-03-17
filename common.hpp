@@ -109,6 +109,14 @@ public:
 	inline void set_height(int height) { height_ = height; }
 	inline void set_width(int width) { width_ = width; }
 
+	inline void Reshape(int num, int channel, int height, int width)
+	{
+		num_ = num;
+		channel_ = channel;
+		height_ = height;
+		width_ = width;
+	}
+
 private:
 	int num_;
 	int channel_;

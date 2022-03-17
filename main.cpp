@@ -5,6 +5,7 @@ int main()
 	OnnxDynamicNetInitParamV1 params;
 	params.onnx_model = "./YOLOX-main/YOLOX_outputs/yolox_s/onnx/yolox_s.onnx";
 	params.max_batch_size = 2; // 最大的batchsize, 可根据自己的模型需求设置
+	params.num_classes = 1; // 设置检测目标类别数
 	params.rt_model_name = "detection.engine";
 
 	cv::Mat img = cv::imread("./YOLOX-main/assets/image--01c1276cb6e346e893cc3d3ce6c6b9df.jpg");
