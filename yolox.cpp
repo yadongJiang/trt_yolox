@@ -28,6 +28,20 @@ YOLOX::YOLOX(const OnnxDynamicNetInitParamV1& params) : params_(params)
 	});
 }
 
+YOLOX::~YOLOX()
+{
+	cudaStreamSynchronize(stream_);
+	cudaStreamDestroy(stream_);
+	if (h_input_ptr != NULL)
+		cudaFreeHost(h_input_ptr);
+	if (h_output_ptr != NULL)
+		cudaFreeHost(h_output_ptr);
+	if (d_input_ptr != NULL)
+		cudaFree(d_input_ptr);
+	if (d_output_ptr != NULL)
+		cudaFree(d_output_ptr);
+}
+
 bool YOLOX::CheckFileExist(const std::string& path)
 {
 	std::fstream check_file(path);

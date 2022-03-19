@@ -53,6 +53,7 @@ class YOLOX
 public:
 	YOLOX(const OnnxDynamicNetInitParamV1& params);
 	YOLOX() = delete;
+	~YOLOX();
 
 	// 单张图像输出执行函数
 	std::vector<BoxInfo> Extract(const cv::Mat& img);
