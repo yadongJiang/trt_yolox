@@ -12,17 +12,18 @@
 ```
     OnnxDynamicNetInitParamV1 params;
     # onnx模型路径
-	params.onnx_model = "./YOLOX-main/YOLOX_outputs/yolox_s/onnx/yolox_s.onnx";
+    params.onnx_model = "./YOLOX-main/YOLOX_outputs/yolox_s/onnx/yolox_s.onnx";
     # 最大的batchsize, 可根据自己的模型需求设置
-	params.max_batch_size = 2;
+    params.max_batch_size = 2;
     # 生成的trt模型的保存路径，可按照自身需求设置
     params.rt_stream_path = "./"
     # 生成的trt模型名
-	params.rt_model_name = "detection.engine";
+    params.rt_model_name = "detection.engine";
     # 设置检测目标类别数
     params.num_classes = 1;
 
+    # 构造YOLOX类对象
     YOLOX yolox(params);
     # infer
-	yolox.Extract(img);
+    vector<BoxInfo> pred_boxes = yolox.Extract(img);
 ```
