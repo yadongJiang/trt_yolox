@@ -8,6 +8,7 @@
 #include <cuda_runtime.h>
 #include "NvOnnxParser.h"
 #include "common.hpp"
+#include <mutex>
 
 struct OnnxDynamicNetInitParamV1
 {
@@ -172,6 +173,8 @@ private:
 
 	ComposeMatLambda *transform_;
 	Tensor2VecMat *tensor2mat;
+
+	std::mutex mtx_;
 };
 
 #endif

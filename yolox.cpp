@@ -166,6 +166,7 @@ std::vector<BoxInfo> YOLOX::Extract(const cv::Mat& img)
 	if (img.empty())
 		return {};
 
+	std::lock_guard<std::mutex> lock(mtx_);
 	set_batch_size(1);
 
 	ProPrecessCPU(img);
@@ -193,6 +194,7 @@ std::vector<std::vector<BoxInfo>>
 		return {};
 	}
 
+	std::lock_guard<std::mutex> lock(mtx_);
 	set_batch_size(imgs.size());
 
 	ProPrecessCPU(imgs);
