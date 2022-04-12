@@ -1,4 +1,4 @@
-# 使用TensorRT实现部署YOLOX (torch->onnx->tensorrt)
+# 使用TensorRT实现部署[YOLOX](https://arxiv.org/pdf/2107.08430.pdf) (torch->onnx->tensorrt)
 
 ## 环境依赖
 
