@@ -128,7 +128,7 @@ __device__ float iou(BoxInfo box1, BoxInfo box2)
 	return inter_area / (box1_area + box2_area - inter_area + 1e-5);
 }
 
-__global__ void num_kernel(BoxInfo* dev_ptr, int num_boxes, float* dev_iou)
+__global__ void nms_kernel(BoxInfo* dev_ptr, int num_boxes, float* dev_iou)
 {
 	int offset = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.x;
@@ -148,7 +148,7 @@ void nms(BoxInfo* h_ptr, int num_boxes, float* h_iou)
 	cudaMemcpy(dev_ptr, h_ptr, num_boxes * sizeof(BoxInfo), cudaMemcpyHostToDevice);
 	float* dev_iou;
 	cudaMalloc((void**)&dev_iou, num_boxes * num_boxes * sizeof(float));
-	num_kernel << <grids, blocks >> > (dev_ptr, num_boxes, dev_iou);
+	nms_kernel << <grids, blocks >> > (dev_ptr, num_boxes, dev_iou);
 
 	cudaMemcpy(h_iou, dev_iou, num_boxes * num_boxes * sizeof(float), cudaMemcpyDeviceToHost);
 }
