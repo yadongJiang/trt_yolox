@@ -119,7 +119,7 @@ void TRTOnnxBase::SaveRtModel(const std::string& path)
 	outfile.close();
 }
 
-void TRTOnnxBase::deserializeCudaEngine(const void* blob, std::size_t size)
+void TRTOnnxBase::deserializeCudaEngine(const void* blob, std::size_t size) 
 {
 	// 创建运行时
 	runtime_ = nvinfer1::createInferRuntime(logger_);

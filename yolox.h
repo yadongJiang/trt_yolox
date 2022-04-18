@@ -3,7 +3,7 @@
 
 #include "trt_onnx_base.h"
 
-class YOLOX : public TRTOnnxBase
+class YOLOX : public TRTOnnxBase 
 {
 public:
 	YOLOX(const OnnxDynamicNetInitParamV1& params);

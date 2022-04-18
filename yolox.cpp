@@ -3,7 +3,7 @@
 
 YOLOX::YOLOX(const OnnxDynamicNetInitParamV1& params) : TRTOnnxBase(params)
 {
-	transform_ = new ComposeMatLambda({
+	transform_ = new ComposeMatLambda({ 
 		YoloXResize(crop_size_),
 		MatToFloat(),
 	});

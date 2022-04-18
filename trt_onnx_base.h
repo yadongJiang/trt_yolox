@@ -62,7 +62,7 @@ protected:
 	// trt infer
 	void Forward();
 	// 设置当前批次中batch_size
-	void set_batch_size(int bs) { _batch_size = bs; }
+	void set_batch_size(int bs) { _batch_size = bs; } 
 
 private:
 	bool CheckFileExist(const std::string& path);
