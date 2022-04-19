@@ -98,22 +98,6 @@ __global__ void detection_bs_kernel(float* dev_ptr, int num, int hw, int no, flo
 	}
 }
 
-void detection(float* dev_ptr, int hw, int no, float test_conf)
-{
-	cout << "test_conf: " << test_conf << endl;
-	dim3 grids = hw / 16;
-	dim3 blocks = 16;
-	detection_kernel << <grids, blocks >> > (dev_ptr, hw, no, test_conf);
-}
-
-void detection_bs(float* dev_ptr, int num, int hw, int no, float test_conf)
-{
-	cout << "test_conf: " << test_conf << endl;
-	dim3 grids = (num * hw) / 16;
-	dim3 blocks = 16;
-	detection_bs_kernel << <grids, blocks >> > (dev_ptr, num, hw, no, test_conf);
-}
-
 __device__ float iou(BoxInfo box1, BoxInfo box2)
 {
 	float x1 = box1.x1 > box2.x1 ? box1.x1 : box2.x1; 
@@ -138,6 +122,64 @@ __global__ void nms_kernel(BoxInfo* dev_ptr, int num_boxes, float* dev_iou)
 	dev_iou[offset] = iou_val;
 }
 
+__global__ void resize_kernel(float* d_dst, int dst_h, int dst_w, int crop_h, int crop_w, int src_h, int src_w, uchar* d_src)
+{
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+	int offset = y * dst_w + x;
+
+	float scale_x = float(src_w) / crop_w;
+	float scale_y = float(src_h) / crop_h;
+
+	if (y >= crop_h || x >= crop_w)
+	{
+		d_dst[offset] = 114.0;
+		d_dst[dst_h * dst_w + offset] = 114.0;
+		d_dst[dst_h * dst_w * 2 + offset] = 114.0;
+	}
+	else
+	{
+		float src_x = (x + 0.5) * scale_x - 0.5;
+		float src_y = (y + 0.5) * scale_y - 0.5;
+
+		int src_x_0 = int(floor(src_x));
+		int src_y_0 = int(floor(src_y));
+		int src_x_1 = src_x_0 + 1 <= src_w - 1 ? src_x_0 + 1 : src_w - 1;
+		int src_y_1 = src_y_0 + 1 <= src_h - 1 ? src_y_0 + 1 : src_h - 1;
+
+		for (int c = 0; c < 3; c++)
+		{
+			uchar v00 = d_src[(src_y_0 * src_w + src_x_0) * 3 + c];
+			uchar v01 = d_src[(src_y_0 * src_w + src_x_1) * 3 + c];
+			uchar v10 = d_src[(src_y_1 * src_w + src_x_0) * 3 + c];
+			uchar v11 = d_src[(src_y_1 * src_w + src_x_1) * 3 + c];
+			uchar value0 = (src_x_1 - src_x) * v00 + (src_x - src_x_0) * v01;
+			uchar value1 = (src_x_1 - src_x) * v10 + (src_x - src_x_0) * v11;
+
+			uchar value = uchar((src_y_1 - src_y) * value0 + (src_y - src_y_0) * value1);
+			float v = float(value);  // / 255.;
+			d_dst[c * dst_h * dst_w + offset] = v;
+		}
+	}
+}
+
+void detection(float* dev_ptr, int hw, int no, float test_conf)
+{
+	cout << "test_conf: " << test_conf << endl;
+	dim3 grids = hw / 16;
+	dim3 blocks = 16;
+	detection_kernel << <grids, blocks >> > (dev_ptr, hw, no, test_conf);
+}
+
+void detection_bs(float* dev_ptr, int num, int hw, int no, float test_conf)
+{
+	cout << "test_conf: " << test_conf << endl;
+	dim3 grids = (num * hw) / 16;
+	dim3 blocks = 16;
+	detection_bs_kernel << <grids, blocks >> > (dev_ptr, num, hw, no, test_conf);
+}
+
 void nms(BoxInfo* h_ptr, int num_boxes, float* h_iou)
 {
 	dim3 grids(num_boxes);
@@ -151,4 +193,17 @@ void nms(BoxInfo* h_ptr, int num_boxes, float* h_iou)
 	nms_kernel << <grids, blocks >> > (dev_ptr, num_boxes, dev_iou);
 
 	cudaMemcpy(h_iou, dev_iou, num_boxes * num_boxes * sizeof(float), cudaMemcpyDeviceToHost);
+}
+
+void yolox_resize(float* dev_ptr, int dst_h, int dst_w, int crop_h, int crop_w, int src_h, int src_w, uchar* h_src)
+{
+	uchar* d_src;
+	cudaMalloc((uchar**)&d_src, src_h * src_w * 3 * sizeof(uchar));
+	cudaMemcpy(d_src, h_src, src_h * src_w * 3 * sizeof(uchar), cudaMemcpyHostToDevice);
+
+	dim3 grids(dst_w / 32, dst_h / 32);
+	dim3 blocks(32, 32);
+	resize_kernel << <grids, blocks >> > (dev_ptr, dst_h, dst_w, crop_h, crop_w, src_h, src_w, d_src);
+
+	cudaFree(d_src);
 }

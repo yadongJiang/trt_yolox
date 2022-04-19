@@ -21,6 +21,10 @@ private:
 	// 多batch输入预处理，trt输入内存填充
 	void ProPrecessCPU(const std::vector<cv::Mat>& imgs);
 
+	// gpu预处理函数
+	void ProPrecessGPU(const cv::Mat& img);
+	void ProPrecessGPU(const std::vector<cv::Mat>& imgs);
+
 	// 单张输入的cpu后处理函数
 	std::vector<BoxInfo> PostProcessCPU();
 	// 多batch输入的cpu后处理函数

@@ -21,11 +21,16 @@ std::vector<BoxInfo> YOLOX::Extract(const cv::Mat& img)
 
 	set_batch_size(1);
 
-	ProPrecessCPU(img);
+	// 预处理cpu接口
+	/*ProPrecessCPU(img);*/
+	// 预处理gpu结接口
+	ProPrecessGPU(img);
+
 	Forward();
-	// 后处理cpu代码
+
+	// 后处理cpu接口
 	/*std::vector<BoxInfo> pred_boxes = PostProcessCPU();*/
-	// 后处理gpu代码
+	// 后处理gpu接口
 	std::vector<BoxInfo> pred_boxes = PostProcessGPU();
 
 	float r = std::min<float>(float(crop_size_.height) / img.rows,
@@ -48,7 +53,9 @@ std::vector<std::vector<BoxInfo>>
 
 	set_batch_size(imgs.size());
 
-	ProPrecessCPU(imgs);
+	/* ProPrecessCPU(imgs); */
+	ProPrecessGPU(imgs);
+
 	Forward();
 	// 多batch的cpu后处理
 	/*std::vector<std::vector<BoxInfo>> bs_pred_boxes = PostProcessCPUMutilBs();*/
@@ -73,6 +80,9 @@ void YOLOX::ProPrecessCPU(const cv::Mat& img)
 
 	std::vector<cv::Mat> channels = (*tensor2mat)(h_input_ptr, 3, 640, 640);
 	cv::split(sample_float, channels);
+
+	cudaMemcpy(d_input_ptr, h_input_ptr, in_shape_.count() * sizeof(float),
+		cudaMemcpyHostToDevice);
 }
 
 void YOLOX::ProPrecessCPU(const std::vector<cv::Mat>& imgs)
@@ -83,6 +93,35 @@ void YOLOX::ProPrecessCPU(const std::vector<cv::Mat>& imgs)
 		cv::Mat sample_float = (*transform_)(img_tmp);
 		std::vector<cv::Mat> channels = (*tensor2mat)(h_input_ptr, 3, 640, 640, i);
 		cv::split(sample_float, channels);
+	}
+}
+
+void YOLOX::ProPrecessGPU(const cv::Mat& img)
+{
+	float r = std::min((float)crop_size_.width / img.cols, 
+					   (float)crop_size_.height / img.rows);
+
+	int crop_h = int(r * img.rows);
+	int crop_w = int(r * img.cols);
+
+	yolox_resize(d_input_ptr, crop_size_.height, crop_size_.width, crop_h, crop_w, img.rows, img.cols, img.data);
+}
+
+void YOLOX::ProPrecessGPU(const std::vector<cv::Mat>& imgs)
+{
+	if (imgs.empty())
+		return;
+	
+	for (int i = 0; i < imgs.size(); i++)
+	{
+		float r = std::min((float)crop_size_.width / imgs[i].cols,
+							(float)crop_size_.height / imgs[i].rows);
+		cout << "r: " << r << endl;
+
+		int crop_h = int(r * imgs[i].rows);
+		int crop_w = int(r * imgs[i].cols);
+		yolox_resize(d_input_ptr + i * crop_size_.width * crop_size_.height*3, crop_size_.height, 
+						crop_size_.width, crop_h, crop_w, imgs[i].rows, imgs[i].cols, imgs[i].data);
 	}
 }
 

@@ -155,9 +155,6 @@ bool TRTOnnxBase::CheckFileExist(const std::string& path)
 
 void TRTOnnxBase::Forward()
 {
-	cudaMemcpy(d_input_ptr, h_input_ptr, in_shape_.count() * sizeof(float),
-		cudaMemcpyHostToDevice);
-
 	nvinfer1::Dims4 input_dims{ _batch_size , in_shape_.channel(),
 								in_shape_.height(), in_shape_.width() };
 	context_->setBindingDimensions(0, input_dims);
